@@ -81,6 +81,6 @@ public class Category {
     }
     @PreUpdate
     protected void onUpdate(){
-        this.createdAt = new Date();
+        this.updatedAt = new Date();
     }
 }

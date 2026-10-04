@@ -26,7 +26,7 @@ public class Product {
     private String description;
     @NotNull
     @DecimalMin("0.00")
-    @Column(precision = 0, scale = 2)
+    @Column(precision = 10, scale = 2)
     private BigDecimal price;
     @Column(updatable = false)
     private Date createdAt;
@@ -112,6 +112,6 @@ public class Product {
     }
     @PreUpdate
     protected void onUpdate(){
-        this.createdAt = new Date();
+        this.updatedAt = new Date();
     }
 }
