@@ -1,0 +1,698 @@
+ ▐▛███▛█   Claude Code v2.1.289
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~\Downloads\product\product
+
+  Sonnet 5.5 is here, and it's faster and excels at well-scoped tasks. Opus 5.5 is still your default. Switch with /model.
+  1 more notice hidden
+
+❯ how serveces will look like and why?                                          
+
+● Bash(cd "C:/Users/niyib/Downloads/product/product" && git ls-files && cat
+      README* 2>/dev/null | head -80)
+  ⎿  .gitattributes
+     .gitignore
+     .mvn/wrapper/maven-wrapper.properties
+     … +91 lines (ctrl+o to expand)
+
+● Bash(cd "C:/Users/niyib/Downloads/product/product/src/main/java/com/chriskar/p
+      roduct" && cat models/*.java repositories/*.java)
+  ⎿  package com.chriskar.product.models;
+     … +224 lines (ctrl+o to expand)
+
+● Your next layer is the services. They sit between the controllers (not written
+  yet) and the two repositories you have. Here's what I'd put in them, based on
+  your entities.
+
+  Layout
+
+  services/
+    CategoryService.java
+    ProductService.java
+  exceptions/
+    ResourceNotFoundException.java   -> 404
+    DuplicateResourceException.java  -> 409
+    GlobalExceptionHandler.java      (@RestControllerAdvice)
+  dto/
+    ProductRequest.java   (name, description, price, List<Long> categoryIds)
+
+  CategoryService
+
+  @Service
+  @Transactional
+  public class CategoryService {
+      private final CategoryRepository categoryRepository;
+      private final ProductRepository productRepository;
+
+      public CategoryService(CategoryRepository c, ProductRepository p) { ... }
+
+      @Transactional(readOnly = true)
+      public List<Category> findAll() { return categoryRepository.findAll(); }
+
+      @Transactional(readOnly = true)
+      public Category findById(Long id) {
+          return categoryRepository.findById(id)
+              .orElseThrow(() -> new ResourceNotFoundException("Category " + id
+  + " not found"));
+      }
+
+      public Category create(Category category) {
+          if (categoryRepository.existsByNameIgnoreCase(category.getName()))
+              throw new DuplicateResourceException("Category '" +
+  category.getName() + "' already exists");
+          return categoryRepository.save(category);
+      }
+
+      public Category update(Long id, Category input) {
+          Category existing = findById(id);
+          categoryRepository.findByNameIgnoreCase(input.getName())
+              .filter(c -> !c.getId().equals(id))
+              .ifPresent(c -> { throw new DuplicateResourceException(...); });
+          existing.setName(input.getName());
+          return existing;                       // dirty checking saves it
+      }
+
+      public void delete(Long id) {
+          Category category = findById(id);
+          for (Product p : productRepository.findByCategories_Id(id)) {
+              p.getCategories().remove(category); // unlink from the owning side
+  first
+          }
+          categoryRepository.delete(category);
+      }
+  }
+
+  ProductService
+
+  @Service
+  @Transactional
+  public class ProductService {
+      // findAll, findById, search(name), findByCategory(categoryId), 
+  findByPriceRange(min, max)
+
+      public Product create(ProductRequest req) {
+          Product p = new Product();
+          apply(p, req);
+          return productRepository.save(p);
+      }
+
+      public Product update(Long id, ProductRequest req) {
+          Product p = findById(id);
+          apply(p, req);
+          return p;
+      }
+
+      private void apply(Product p, ProductRequest req) {
+          p.setName(req.name());
+          p.setDescription(req.description());
+          p.setPrice(req.price());
+          List<Category> cats =
+  categoryRepository.findAllById(req.categoryIds());
+          if (cats.size() != req.categoryIds().size())
+              throw new ResourceNotFoundException("One or more categories not 
+  found");
+          p.setCategories(cats);
+      }
+
+      public void delete(Long id) { productRepository.delete(findById(id)); }
+  }
+
+  Why this design
+
+  1. Business rules go in services, not controllers. The duplicate-name check,
+     "category must exist", and unlinking before a delete are all rules. If they
+     live in the service, every controller endpoint follows them, and you can
+     test them without HTTP.
+  2. Product owns the many-to-many link. Product has the @JoinTable, and
+     Category.products is just mappedBy. Rows in product_category only change
+     when product.getCategories() changes. That has two consequences:
+     - Products get assigned to categories in ProductService, by passing
+       category IDs.
+     - Before deleting a category, CategoryService.delete has to remove it from
+       each product's list. If it doesn't, MySQL rejects the delete because of
+       the foreign key on the join table. That's why findByCategories_Id is
+       useful here.
+  3. @Transactional on the class. The unlink-then-delete steps happen as one
+     unit, so a failure rolls everything back. Changes to loaded entities save
+     automatically (dirty checking), so update doesn't need to call save. Lazy
+     collections can be read safely while the transaction is open. readOnly = 
+     true on reads is a small performance hint.
+  4. Updates load the existing entity and copy fields onto it. The alternative,
+     save(incomingObject), has two problems:
+     - It would replace the product's categories with whatever the request sent,
+       often an empty list.
+     - It lets the client set id or timestamps.
+  5. The request uses categoryIds, not whole Category objects. Clients send
+     "categoryIds": [1, 3]. Accepting nested objects would let clients create or
+     modify categories through the product endpoint.
+  6. Services throw custom exceptions instead of returning null. One
+     @RestControllerAdvice turns them into clean 404 and 409 responses, so
+     controllers stay small. Each controller method is just one call to the
+     service.
+  7. Dependencies come in through the constructor, not @Autowired fields. The
+     fields can be final, and unit tests can pass in mock repositories directly.
+
+  One thing to watch: Product.categories is LAZY and not @JsonIgnored. Returning
+  a Product from a controller only works because Spring's open-in-view setting
+  is on by default, and it logs a warning about that. A cleaner fix is a
+  ProductResponse DTO built inside the service.
+
+  Want me to create these files, along with the exception handler and
+  controllers?
+
+✻ Sautéed for 28s · done 4:42 PM
+
+❯ yes create them                                                               
+
+● Bash(cd "C:/Users/niyib/Downloads/product/product" && cat pom.xml | sed -n
+      '1,200p' | grep -E "artifactId|version|java" ; cat
+      src/main/resources/application.properti…)
+  ⎿  <?xml version="1.0" encoding="UTF-8"?>
+                <artifactId>spring-boot-starter-parent</artifactId>
+                <version>4.1.1</version>
+     … +23 lines (ctrl+o to expand)
+
+● Bash(cd "C:/Users/niyib/Downloads/product/product/src/main/java/com/chriskar/p
+      roduct" && mkdir -p dto exceptions services controllers…)
+  ⎿  Error: Exit code 2
+     /usr/bin/bash: -c: line 219: unexpected EOF while looking for matching `''
+
+● Bash(cd "C:/Users/niyib/Downloads/product/product/src/main/java/com/chriskar/p
+      roduct" && find dto exceptions services controllers -type f 2>/dev/null)
+  ⎿  Some directories were inaccessible
+
+● The shell script failed to parse, so I'll write the files one by one instead.
+
+● Write(src\main\java\com\chriskar\product\dto\CategoryRequest.java)
+  ⎿  Wrote 11 lines to
+     src\main\java\com\chriskar\product\dto\CategoryRequest.java
+       1 package com.chriskar.product.dto;
+       2 
+       3 import jakarta.validation.constraints.NotBlank;
+       4 import jakarta.validation.constraints.Size;
+       5 
+       6 public record CategoryRequest(
+       7         @NotBlank
+       8         @Size(min = 2, max = 100)
+       9         String name
+      10 ) {
+     … +1 line (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\dto\CategoryResponse.java)
+  ⎿  Wrote 17 lines to
+     src\main\java\com\chriskar\product\dto\CategoryResponse.java
+       1 package com.chriskar.product.dto;
+       2 
+       3 import com.chriskar.product.models.Category;
+       4 
+       5 import java.util.Date;
+       7 public record CategoryResponse(Long id, String name, Date create
+         dAt, Date updatedAt) {
+       8 
+       9     public static CategoryResponse from(Category category) {
+      10         return new CategoryResponse(
+     … +8 lines (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\dto\ProductRequest.java)
+  ⎿  Wrote 23 lines to
+     src\main\java\com\chriskar\product\dto\ProductRequest.java
+      1 package com.chriskar.product.dto;
+      2 
+      3 import jakarta.validation.constraints.DecimalMin;
+      4 import jakarta.validation.constraints.NotBlank;
+      5 import jakarta.validation.constraints.NotNull;
+      6 import jakarta.validation.constraints.Size;
+      7 
+      8 import java.math.BigDecimal;
+      9 import java.util.List;
+     … +13 lines (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\dto\ProductResponse.java)
+  ⎿  Wrote 30 lines to
+     src\main\java\com\chriskar\product\dto\ProductResponse.java
+       1 package com.chriskar.product.dto;
+       2 
+       3 import com.chriskar.product.models.Product;
+       4 
+       5 import java.math.BigDecimal;
+       6 import java.util.Date;
+       7 import java.util.List;
+       8 
+       9 public record ProductResponse(
+      10         Long id,
+     … +21 lines (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\exceptions\ResourceNotFoundException.
+       java)
+  ⎿  Wrote 7 lines to src\main\java\com\chriskar\product\exceptions\Resourc
+     eNotFoundException.java
+      1 package com.chriskar.product.exceptions;
+      2 
+      3 public class ResourceNotFoundException extends RuntimeException {
+      4     public ResourceNotFoundException(String message) {
+      5         super(message);
+      6     }
+      7 }
+
+● Write(src\main\java\com\chriskar\product\exceptions\DuplicateResourceException
+       .java)
+  ⎿  Wrote 7 lines to src\main\java\com\chriskar\product\exceptions\Duplica
+     teResourceException.java
+      1 package com.chriskar.product.exceptions;
+      2 
+      3 public class DuplicateResourceException extends RuntimeException 
+        {
+      4     public DuplicateResourceException(String message) {
+      5         super(message);
+      6     }
+      7 }
+
+● Write(src\main\java\com\chriskar\product\exceptions\GlobalExceptionHandler.jav
+       a)
+  ⎿  Wrote 40 lines to src\main\java\com\chriskar\product\exceptions\Global
+     ExceptionHandler.java
+       1 package com.chriskar.product.exceptions;
+       2 
+       3 import org.springframework.http.HttpStatus;
+       5 import org.springframework.web.bind.MethodArgumentNotValidExcept
+         ion;
+       6 import org.springframework.web.bind.annotation.ExceptionHandler;
+       7 import org.springframework.web.bind.annotation.RestControllerAdv
+       8 
+       9 import java.util.LinkedHashMap;
+      10 import java.util.Map;
+     … +39 lines (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\services\CategoryService.java)
+  ⎿  Wrote 80 lines to
+     src\main\java\com\chriskar\product\services\CategoryService.java
+       1 package com.chriskar.product.services;
+       2 
+       3 import com.chriskar.product.dto.CategoryRequest;
+       5 import com.chriskar.product.dto.ProductResponse;
+       6 import com.chriskar.product.exceptions.DuplicateResourceExceptio
+         n;
+       7 import com.chriskar.product.exceptions.ResourceNotFoundException
+       8 import com.chriskar.product.models.Category;
+       9 import com.chriskar.product.models.Product;
+      10 import com.chriskar.product.repositories.CategoryRepository;
+     … +82 lines (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\services\ProductService.java)
+  ⎿  Wrote 99 lines to
+     src\main\java\com\chriskar\product\services\ProductService.java
+       1 package com.chriskar.product.services;
+       2 
+       3 import com.chriskar.product.dto.ProductRequest;
+       4 import com.chriskar.product.dto.ProductResponse;
+       5 import com.chriskar.product.exceptions.ResourceNotFoundException
+       6 import com.chriskar.product.models.Category;
+       7 import com.chriskar.product.models.Product;
+       8 import com.chriskar.product.repositories.CategoryRepository;
+       9 import com.chriskar.product.repositories.ProductRepository;
+      10 import org.springframework.stereotype.Service;
+     … +106 lines (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\controllers\CategoryController.java)
+  ⎿  Wrote 53 lines to
+     src\main\java\com\chriskar\product\controllers\CategoryController.java
+      1 package com.chriskar.product.controllers;
+      2 
+      3 import com.chriskar.product.dto.CategoryRequest;
+      4 import com.chriskar.product.dto.CategoryResponse;
+      5 import com.chriskar.product.dto.ProductResponse;
+      6 import com.chriskar.product.services.CategoryService;
+      7 import jakarta.validation.Valid;
+      8 import org.springframework.http.HttpStatus;
+      9 import org.springframework.web.bind.annotation.*;
+     … +46 lines (ctrl+o to expand)
+
+● Write(src\main\java\com\chriskar\product\controllers\ProductController.java)
+  ⎿  Wrote 58 lines to
+     src\main\java\com\chriskar\product\controllers\ProductController.java
+       1 package com.chriskar.product.controllers;
+       2 
+       3 import com.chriskar.product.dto.ProductRequest;
+       4 import com.chriskar.product.dto.ProductResponse;
+       5 import com.chriskar.product.services.ProductService;
+       6 import jakarta.validation.Valid;
+       7 import org.springframework.http.HttpStatus;
+       8 import org.springframework.web.bind.annotation.*;
+       9 
+      10 import java.math.BigDecimal;
+     … +52 lines (ctrl+o to expand)
+
+● PowerShell(.\mvnw.cmd -q -DskipTests compile; "exit=$LASTEXITCODE")  ⎿  exit=0
+  ⎿  (timeout 6m 40s)
+
+● I created the services, controllers, DTOs and exception handling, and the
+  project compiles. I haven't run it against MySQL or called any endpoints, and
+  nothing is committed.
+
+  New files under src/main/java/com/chriskar/product/:
+
+  ┌──────────────┬───────────────────────────────────────────────────────────┐
+  │   Package    │                           Files                           │
+  ├──────────────┼───────────────────────────────────────────────────────────┤
+  │ services/    │ CategoryService, ProductService                           │
+  ├──────────────┼───────────────────────────────────────────────────────────┤
+  │ controllers/ │ CategoryController, ProductController                     │
+  ├──────────────┼───────────────────────────────────────────────────────────┤
+  │ dto/         │ CategoryRequest, CategoryResponse, ProductRequest,        │
+  │              │ ProductResponse                                           │
+  ├──────────────┼───────────────────────────────────────────────────────────┤
+  │ exceptions/  │ ResourceNotFoundException (404),                          │
+  │              │ DuplicateResourceException (409), GlobalExceptionHandler  │
+  └──────────────┴───────────────────────────────────────────────────────────┘
+
+  Endpoints:
+
+  GET    /api/categories                  list all
+  GET    /api/categories/{id}             get one
+  GET    /api/categories/{id}/products    products in a category
+  POST   /api/categories                  {"name": "Electronics"}
+  PUT    /api/categories/{id}
+  DELETE /api/categories/{id}             unlinks its products first, then 
+  deletes
+
+  GET    /api/products
+  GET    /api/products/{id}
+  GET    /api/products/search?name=phone
+  GET    /api/products/price?min=10&max=500
+  POST   /api/products                    
+  {"name","description","price","categoryIds":[1,2]}
+  PUT    /api/products/{id}
+  DELETE /api/products/{id}
+
+  Small changes from the design I described:
+  - Responses are DTOs too, not entities. They're built inside the service
+    transaction, so the lazy categories list is always loaded before the
+    response is sent.
+  - Errors use Spring's standard ProblemDetail JSON. Failed validation returns
+    400 with a map from each field to its error message.
+  - Inputs are cleaned up. Names are trimmed, so " Books " and "books" count as
+    duplicates, and repeated category IDs in a request are de-duplicated.
+  - Updates write to the database immediately. Without that, the response would
+    show the old updatedAt value.
+
+  Two optional follow-ups:
+  - You could add spring.jpa.open-in-view=false to application.properties. That
+    turns off the open-in-view setting I mentioned last time, which these
+    endpoints no longer need, and removes its startup warning.
+  - README.md still says controllers aren't added yet, so that status line is
+    out of date.
+
+  To try it, start the app with mvnw.cmd spring-boot:run and open
+  http://localhost:8080/swagger-ui.html.
+
+✻ Crunched for 1m 47s · done 5:03 PM
+
+❯ /export                                                                       
+  ⎿  Conversation exported to: C:\Users\niyib\Downloads\product\product\2026-10-
+     04-170724-how-serveces-will-look-like-and-why.txt
+
+❯ claude                                                                        
+
+● Your /export worked. The conversation was saved to
+  2026-10-04-170724-how-serveces-will-look-like-and-why.txt in the project root.
+
+  That file is inside the git repo, so git add . would include it in your next
+  commit. If you don't want it in the repo, move it elsewhere or add *.txt to
+  .gitignore.
+
+  You also typed "claude" after the export. Did you mean to ask something? I can
+  commit the new services and controllers, update the README, or test the
+  endpoints against MySQL.
+
+✻ Churned for 2s · done 5:13 PM
+
+❯ explain CategoryService                                                       
+
+● CategoryService holds the rules for categories. The controller hands it a
+  request, and the service decides what is allowed, talks to the database, and
+  returns a CategoryResponse.
+
+  Class setup (services/CategoryService.java:17-26)
+
+  @Service
+  @Transactional
+  public class CategoryService {
+      private final CategoryRepository categoryRepository;
+      private final ProductRepository productRepository;
+
+  - @Service registers the class with Spring, so Spring can pass it into
+    CategoryController.
+  - @Transactional on the class wraps every public method in a database
+    transaction. If anything throws, all changes in that method are rolled back.
+  - The repositories are passed in through the constructor (lines 23-26). The
+    fields can be final, and a test can pass in mock repositories.
+  - It needs ProductRepository too, because deleting a category or listing its
+    products means touching products.
+
+  Read methods (lines 28-42)
+
+  @Transactional(readOnly = true)
+  public List<CategoryResponse> findAll() { ... }
+  public CategoryResponse findById(Long id) { ... }
+  public List<ProductResponse> findProducts(Long id) { ... }
+
+  - readOnly = true tells Hibernate nothing will change, so it skips checking
+    loaded entities for changes. This is a small speedup.
+  - Results are converted to DTOs with CategoryResponse::from before they leave
+    the service. The controller never sees a JPA entity.
+  - findProducts calls getCategory(id) first (line 40) even though it ignores
+    the result. That makes a missing category return 404 instead of an empty
+    list. Without the check, /api/categories/999/products would return [], which
+    looks like "this category has no products."
+
+  create (lines 44-52)
+
+  String name = request.name().trim();
+  if (categoryRepository.existsByNameIgnoreCase(name))
+      throw new DuplicateResourceException(...);
+  Category category = new Category();
+  category.setName(name);
+  return CategoryResponse.from(categoryRepository.save(category));
+
+  1. It trims the name, so "  Books " is stored as "Books".
+  2. It rejects duplicates regardless of case. GlobalExceptionHandler turns the
+     exception into 409 Conflict.
+  3. It builds a new entity and copies over only name. The client can't set id,
+     createdAt or updatedAt. @PrePersist in Category fills in createdAt.
+
+  update (lines 54-65)
+
+  Category category = getCategory(id);
+  categoryRepository.findByNameIgnoreCase(name)
+          .filter(other -> !other.getId().equals(id))
+          .ifPresent(other -> { throw new DuplicateResourceException(...); });
+  category.setName(name);
+  return CategoryResponse.from(categoryRepository.saveAndFlush(category));
+
+  - It loads the existing category (404 if missing) and changes it, rather than
+    saving a new object built from the request.
+  - The duplicate check skips the category being edited (the .filter). Renaming
+    "books" to "Books" is allowed, since the only match is itself. Renaming it
+    to "Electronics" fails if a different category already has that name.
+  - It uses saveAndFlush instead of just changing the field. Inside a
+    transaction, Hibernate would save the change at commit anyway. Flushing now
+    runs the UPDATE immediately, which triggers @PreUpdate. That sets updatedAt
+    before the response is built, so the response doesn't show a stale
+    timestamp.
+
+  delete (lines 67-74), the most important one
+
+  Category category = getCategory(id);
+  for (Product product : productRepository.findByCategories_Id(id)) {
+      product.getCategories().remove(category);
+  }
+  categoryRepository.delete(category);
+
+  The reason for the loop is in your entities:
+
+  - Product.categories has the @JoinTable, so Product owns the product_category
+    table.
+  - Category.products is mappedBy = "categories", so it is the inverse side.
+    Hibernate ignores changes made to it.
+
+  If you deleted the category directly, rows in product_category would still
+  point at it, and MySQL's foreign key would reject the delete. So the method:
+
+  1. finds every product linked to the category,
+  2. removes the category from each product's list, which makes Hibernate delete
+     those join-table rows,
+  3. then deletes the category.
+
+  Everything runs in one transaction. If step 3 fails, the unlinking in step 2
+  is rolled back too. The products themselves are never deleted, only their link
+  to this category.
+
+  getCategory helper (lines 76-79)
+
+  private Category getCategory(Long id) {
+      return categoryRepository.findById(id)
+              .orElseThrow(() -> new ResourceNotFoundException("Category " + id
+  + " not found"));
+  }
+
+  This is the one place that does "load or 404." Every method that takes an id
+  uses it, so a missing category always gives the same error message and status.
+
+  One gap to know about
+
+  The duplicate check is only enforced in code. If two requests create "Books"
+  at the same moment, both can pass existsByNameIgnoreCase before either saves,
+  and you end up with two "Books" categories. The fix is a database-level
+  guarantee: @Column(unique = true) on Category.name. You'd then also handle
+  DataIntegrityViolationException as a 409. With MySQL's default
+  case-insensitive collation, that unique index also treats "books" and "Books"
+  as the same name.
+
+✻ Brewed for 21s · done 5:14 PM
+
+❯ explain ProductService                                                        
+
+● ProductService does the same job for products as CategoryService does for
+  categories. The main difference is that a product owns its link to categories,
+  so this is where products get attached to and removed from categories.
+
+  Class setup (services/ProductService.java:19-28)
+
+  @Service
+  @Transactional
+  public class ProductService {
+      private final ProductRepository productRepository;
+      private final CategoryRepository categoryRepository;
+
+  The setup matches CategoryService:
+  - @Service lets Spring pass it into ProductController.
+  - @Transactional on the class runs each public method in a transaction that
+    rolls back on any exception.
+  - The repositories come in through the constructor.
+  - It needs CategoryRepository to turn the categoryIds a client sends into
+    actual Category entities.
+
+  Read methods (lines 30-51)
+
+  findAll()                     -> productRepository.findAll()
+  findById(id)                  -> getProduct(id), or 404
+  searchByName(name)            -> findByNameContainingIgnoreCase(name)
+  findByPriceRange(min, max)    -> findByPriceBetween(min, max)
+
+  - All are readOnly = true, and each converts entities to ProductResponse
+    before returning.
+  - The DTOs are built inside the transaction, and that's required here.
+    Product.categories is LAZY, so ProductResponse.from reads
+    product.getCategories() while the database session is still open. Built
+    outside the transaction, the categories either couldn't load or would depend
+    on open-in-view.
+  - searchByName matches part of the name, ignoring case. ?name=pho finds
+    "iPhone" and "Phone case".
+  - findByPriceRange checks its input first (lines 47-49). If min > max it
+    throws IllegalArgumentException, which GlobalExceptionHandler turns into
+    400. Without the check, BETWEEN 500 AND 10 silently returns nothing, which
+    looks like "no products." BETWEEN includes both ends, so min=10&max=500
+    includes products priced exactly 10 or 500.
+
+  create and update (lines 53-64)
+
+  public ProductResponse create(ProductRequest request) {
+      Product product = new Product();
+      apply(product, request);
+      return ProductResponse.from(productRepository.save(product));
+  }
+
+  public ProductResponse update(Long id, ProductRequest request) {
+      Product product = getProduct(id);
+      apply(product, request);
+      return ProductResponse.from(productRepository.saveAndFlush(product));
+  }
+
+  Both share apply. The only difference is where the entity comes from:
+  - create starts from a new Product. @PrePersist sets createdAt.
+  - update loads the existing product (404 if missing), so id and createdAt stay
+    unchanged. saveAndFlush runs the UPDATE immediately so @PreUpdate sets
+    updatedAt before the response is built.
+
+  PUT replaces everything. Every field, including categories, is overwritten
+  from the request. If a client sends a PUT without categoryIds, the product
+  ends up with no categories. That's standard PUT behavior. If you want partial
+  updates, add a PATCH endpoint later.
+
+  apply (lines 70-75)
+
+  product.setName(request.name().trim());
+  product.setDescription(request.description().trim());
+  product.setPrice(request.price());
+  product.setCategories(resolveCategories(request.categoryIds()));
+
+  - This is the only code that copies request data onto a Product, which keeps
+    create and update consistent.
+  - The client never sends id, createdAt, updatedAt or whole category objects,
+    because ProductRequest doesn't have those fields.
+  - Validation already happened in the controller. @Valid on the controller
+    checked the request (not blank, length limits, price >= 0), so apply can
+    assume the fields are valid.
+
+  resolveCategories (lines 77-89), the core of this class
+
+  if (categoryIds == null || categoryIds.isEmpty()) return new ArrayList<>();
+
+  Set<Long> uniqueIds = new LinkedHashSet<>(categoryIds);
+  List<Category> categories = categoryRepository.findAllById(uniqueIds);
+  if (categories.size() != uniqueIds.size()) {
+      ... compute missing ids ...
+      throw new ResourceNotFoundException("Categories not found: " + missing);
+  }
+  return new ArrayList<>(categories);
+
+  Step by step:
+
+  1. No IDs means no categories. A product doesn't have to belong to a category.
+  2. Duplicate IDs are removed with a LinkedHashSet. Without that, [1, 1] would
+     cause two problems:
+     - It would ask for 2 categories but get 1 back, so the size check would
+       wrongly fail.
+     - It could try to insert two identical join-table rows.
+  3. All categories are loaded in one query with findAllById, instead of one
+     query per ID.
+  4. Every ID must exist. If the counts don't match, it works out exactly which
+     IDs are missing and returns 404, e.g. Categories not found: [7, 9]. It
+     never saves a product that is only partly linked.
+  5. It returns a new ArrayList, so the product always holds a list that can be
+     changed. CategoryService.delete relies on this when it calls
+     product.getCategories().remove(...).
+
+  This is how links are created. Product has the @JoinTable, so setting
+  product.setCategories(...) is enough. When the transaction commits, Hibernate
+  adds or deletes rows in product_category to match the list.
+
+  delete (lines 66-68)
+
+  productRepository.delete(getProduct(id));
+
+  This is simpler than CategoryService.delete, also because Product owns the
+  link. When a product is deleted, Hibernate first removes its rows from
+  product_category automatically. No manual unlinking is needed, and the
+  categories themselves are untouched.
+
+  Helpers (lines 91-98)
+
+  - getProduct(id) is the one place that does "load or 404."
+  - toResponses(list) saves repeating
+    .stream().map(ProductResponse::from).toList() in every read method.
+
+  Two things to be aware of
+
+  1. Lists of products cause one extra query per product (the "N+1" problem).
+     findAll() loads N products in one query. Then ProductResponse.from touches
+     each product's lazy categories list, which runs another query per product.
+     That's fine for small data, but slow with thousands of products. The fix is
+     to load categories in the same query, by adding this to the repository
+     methods:
+  @EntityGraph(attributePaths = "categories")
+  List<Product> findAll();
+  2. Nothing is paged. findAll() and the search methods return every match.
+     Spring Data has paging built in through Pageable and Page<Product>, which
+     you'd add once the table grows.
+
+✻ Baked for 27s · done 5:22 PM

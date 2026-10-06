@@ -1,0 +1,93 @@
+ ▐▛███▛█   Claude Code v2.1.289
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~\Downloads\product\product\src\main\java\com\chriskar\product
+
+▎ [✻] [✻] [✻] · Share Claude Code and earn $10 in usage credits · /passes
+
+❯ xplain dto what does it do and why?                                           
+
+● Bash(cd "C:/Users/niyib/Downloads/product/product/src/main/java/com/chriskar/p
+      roduct" && for f in dto/* models/* controllers/* services/*; do echo "===
+      $f"; cat "$f"…)
+  ⎿  === dto/CategoryRequest.java
+     package com.chriskar.product.dto;
+     … +581 lines (ctrl+o to expand)
+
+● What a DTO is
+
+  A DTO (Data Transfer Object) is a small, plain class whose only job is to
+  carry data across a boundary. In your app, that boundary is between the HTTP
+  client (JSON) and your code. It has no database mapping and no business logic.
+  It just defines the shape of the data going in or out.
+
+  Your project has two kinds:
+
+  ┌────────────────────────────┬──────────────┬────────────────────────────┐
+  │            DTO             │  Direction   │          Purpose           │
+  ├────────────────────────────┼──────────────┼────────────────────────────┤
+  │ CategoryRequest,           │ client →     │ The fields a client is     │
+  │ ProductRequest             │ server       │ allowed to send            │
+  ├────────────────────────────┼──────────────┼────────────────────────────┤
+  │ CategoryResponse,          │ server →     │ The fields the API sends   │
+  │ ProductResponse            │ client       │ back                       │
+  └────────────────────────────┴──────────────┴────────────────────────────┘
+
+  The flow in your app looks like this:
+
+  JSON body ──► ProductRequest ──► ProductService.apply() ──► Product (entity) 
+  ──► DB
+  DB ──► Product (entity) ──► ProductResponse.from() ──► JSON response
+
+  The @Entity classes in models/ (Product, Category) never leave the service
+  layer. Controllers only ever see DTOs.
+
+  Why not just use the entities directly?
+
+  1. Clients can only send the fields you choose.
+  ProductRequest has name, description, price and categoryIds. It has no id,
+  createdAt or updatedAt. If your controller accepted @RequestBody Product
+  instead, a client could send "id": 5 or "createdAt": "2001-01-01" and possibly
+  overwrite data. With the DTO, those fields simply don't exist in the input.
+
+  2. The input can be simpler than the database model.
+  On a Product entity, categories are a List<Category> of full objects. A client
+  shouldn't have to send whole category objects, so ProductRequest takes
+  List<Long> categoryIds. ProductService.resolveCategories() then looks them up
+  and returns a clear 404 if any ID doesn't exist.
+
+  3. It avoids infinite loops when converting to JSON.
+  Product points to categories, and each Category points back to products. If
+  Jackson serialized the entities directly, it would follow those links back and
+  forth forever. That's why Category.java has @JsonIgnore on products. The
+  response DTOs avoid the problem entirely: ProductResponse contains
+  List<CategoryResponse>, and CategoryResponse has no product list.
+
+  4. It avoids lazy-loading errors.
+  Both relationships are FetchType.LAZY. If Jackson touched a lazy collection
+  after the database transaction had closed, you'd get a
+  LazyInitializationException. The from(...) methods run inside the service's
+  @Transactional methods, so all the data is loaded while the session is still
+  open.
+
+  5. Validation is tied to each request.
+  @NotBlank, @Size and @DecimalMin on the request records, together with @Valid
+  in the controller, reject bad input with a 400 error before your service code
+  runs.
+
+  6. The API and the database can change independently.
+  You can rename a column, add an internal field, or restructure an entity
+  without breaking API clients, because the JSON shape is defined by the DTO,
+  not the table.
+
+  Why record?
+
+  Java records are a natural fit for DTOs. They're immutable, and they're short:
+  no getters, setters or constructors to write. Your field accessors are
+  request.name() rather than getName(). The static from(entity) factory on each
+  response record keeps the entity-to-DTO conversion in one place.
+
+  In short: entities describe how data is stored. DTOs describe how data is
+  exchanged over the API. Keeping them separate makes the API safer, more
+  predictable and easier to change.
+
+✻ Crunched for 18s · done 6:31 AM
